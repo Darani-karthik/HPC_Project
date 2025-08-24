@@ -80,10 +80,8 @@ class DecisionTree:
         self.d_X = cuda.to_device(X.astype(np.float32))
         self.d_y = cuda.to_device(y.astype(np.int32))
         self.n_feats = X.shape[1] if not self.n_feats else min(self.n_feats, X.shape[1])
-        # ***** CHANGE 1: Pass X and y into the first call *****
         self.root = self._grow_tree(X, y, np.arange(X.shape[0]), depth=0)
 
-    # ***** CHANGE 2: Accept X and y as arguments *****
     def _grow_tree(self, X, y, indices, depth):
         labels = y[indices]
         
