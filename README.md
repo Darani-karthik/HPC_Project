@@ -23,6 +23,10 @@ The initial phase focused on establishing strong performance baselines using cla
 
 *   **Ensemble Models (Random Forest & Gradient Boosting):** These models showcased a different parallel programming paradigm. Instead of algebraic operations, their bottleneck is a combinatorial search for the best split point in a tree. A powerful CUDA kernel was written to parallelize this search, with thousands of threads evaluating potential splits simultaneously to find the one with the best Gini Impurity or MSE.
 
+*   **Ridge Classifier (solved with Conjugate Gradient): This was the strongest-performing non-neural model and demonstrated a sophisticated numerical approach. Instead of iterative gradient descent, this model formulates the L2-regularized objective function as a system of linear equations ((X.T*X + alpha*I)w = X.T*y). It then uses a custom-built Conjugate Gradient (CG) solver to find the optimal weights directly. The core of this high-performance solver was implemented with two from-scratch CUDA C++ kernels for the most intensive operations: sparse matrix-vector multiplication (csr_mv) and its transpose (csr_mvt).
+
+*   **Softmax Regression: This model served as a robust linear baseline, achieving a respectable accuracy. It represents the classic gradient descent approach. The entire learning process was driven by a custom CUDA C++ kernel that calculated the gradient of the cross-entropy loss and performed the weight updates in a massively parallel fashion. Its performance highlights the effectiveness of linear models on this dataset but also shows their limitations compared to the ANNs.
+
 ---
 
 ## 3. Phase 2: Advanced Architectures with Semantic Embeddings
