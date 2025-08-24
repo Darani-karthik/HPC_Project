@@ -38,12 +38,13 @@ The project uses the **Financial PhraseBank** dataset:
 
 ### Phase 1 – One-Hot Encoding (OHE)
 - Generated OHE embeddings.
-- Trained traditional ML models and tested performance on GPU.
+- Trained traditional transformer  and tested performance on GPU.
 
 ### Phase 2 – Singular Value Decomposition (SVD)
 - Reduced feature dimensionality using SVD.
 - Accelerated matrix operations with CUDA for better efficiency.
-
+- observed negative embeddings generation
+  
 ### Phase 3 – Non-negative Matrix Factorization (NMF)
 - Applied NMF for feature extraction.
 - Assessed impact on deep learning model accuracy.
