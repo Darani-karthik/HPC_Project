@@ -1,5 +1,10 @@
 # step4_ann.py (Ultra-Compact Hybrid Version)
 
+# Hyperparameters (tune as needed)
+HIDDEN_SIZE = 64
+LEARNING_RATE = 0.15
+EPOCHS = 2000
+
 import numpy as np
 import scipy.sparse
 import cupy as cp
@@ -12,7 +17,7 @@ X_sparse_cpu = scipy.sparse.load_npz('preprocessed_features.npz')
 y_cpu = np.load('preprocessed_labels.npy')
 n_samples, n_features = X_sparse_cpu.shape
 n_classes = len(np.unique(y_cpu))
-hidden_size, lr, epochs = 64, 0.15, 2000
+hidden_size, lr, epochs = HIDDEN_SIZE, LEARNING_RATE, EPOCHS
 
 # 2. THE ONE CUSTOM KERNEL: Sparse Weight Update (X.T @ delta)
 update_sparse_weights_kernel_code = r'''
