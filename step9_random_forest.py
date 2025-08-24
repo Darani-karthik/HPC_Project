@@ -1,4 +1,3 @@
-# step9_random_forest.py (Corrected)
 
 import numpy as np
 from numba import cuda
@@ -6,10 +5,19 @@ import math
 import scipy.sparse
 from sklearn.model_selection import train_test_split
 from collections import Counter
+from sklearn.metrics import confusion_matrix, classification_report
 
-# --- CUDA Kernel (No changes here) ---
+# Hyperparameters
+N_TREES = 5  
+MAX_DEPTH = 10 
+
+# Load data
+X_sparse = scipy.sparse.load_npz('preprocessed_features.npz')
+y = np.load('preprocessed_labels.npy')
+X = X_sparse.toarray()
 
 @cuda.jit
+# CUDA kernel for best split
 def find_best_split_kernel(data, labels, node_indices, n_features_subset, feature_indices,
                            min_impurity, best_feature, best_threshold):
     thread_idx = cuda.grid(1)
@@ -62,14 +70,14 @@ def find_best_split_kernel(data, labels, node_indices, n_features_subset, featur
             best_feature[0] = feature_col
             best_threshold[0] = threshold
 
-# --- CPU Helper Classes ---
-
 class Node:
+    # Tree node
     def __init__(self, feature=None, threshold=None, left=None, right=None, *, value=None):
         self.feature, self.threshold, self.left, self.right, self.value = feature, threshold, left, right, value
     def is_leaf_node(self): return self.value is not None
 
 class DecisionTree:
+    # Single decision tree
     def __init__(self, min_samples_split=2, max_depth=10, n_feats=None):
         self.min_samples_split = min_samples_split
         self.max_depth = max_depth
@@ -142,6 +150,7 @@ class DecisionTree:
         return self._traverse_tree(x, node.right)
 
 class RandomForest:
+    # Random forest ensemble
     def __init__(self, n_trees=10, min_samples_split=2, max_depth=10, n_feats=None):
         self.n_trees, self.min_samples_split, self.max_depth, self.n_feats = n_trees, min_samples_split, max_depth, n_feats
         self.trees = []
@@ -160,30 +169,24 @@ class RandomForest:
     def predict(self, X):
         tree_preds = np.array([tree.predict(X) for tree in self.trees])
         tree_preds = np.swapaxes(tree_preds, 0, 1)
-        y_pred = [Counter(pred).most_common(1)[0][0] for pred in tree_preds]
+        y_pred = [Counter(pred)most_common(1)[0][0] for pred in tree_preds]
         return np.array(y_pred)
 
-def run_random_forest():
-    print("--- Running Step 9: Random Forest (CUDA-Accelerated) ---")
-    
-    X_sparse = scipy.sparse.load_npz('preprocessed_features.npz')
-    y = np.load('preprocessed_labels.npy')
-    X = X_sparse.toarray()
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    
-    n_features = X.shape[1]
-    n_feats_for_tree = int(np.sqrt(n_features))
-    
-    forest = RandomForest(n_trees=5, max_depth=10, n_feats=n_feats_for_tree)
-    forest.fit(X_train, y_train)
-
-    print("\nStarting prediction phase...")
-    predictions = forest.predict(X_test)
-    accuracy = np.mean(predictions == y_test)
-    
-    print(f"\nRandom Forest Final Accuracy: {accuracy * 100:.2f}%")
-    print("------------------------------------------\n")
-
-if __name__ == '__main__':
-    run_random_forest()
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+n_features = X.shape[1]
+n_feats_for_tree = int(np.sqrt(n_features))
+# Build and train forest
+forest = RandomForest(n_trees=N_TREES, max_depth=MAX_DEPTH, n_feats=n_feats_for_tree)
+forest.fit(X_train, y_train)
+print("\nStarting prediction phase...")
+# Predict and evaluate
+predictions = forest.predict(X_test)
+accuracy = np.mean(predictions == y_test)
+print(f"\nRandom Forest Final Accuracy: {accuracy * 100:.2f}%")
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, predictions))
+print("\nClassification Report:")
+print(classification_report(y_test, predictions, digits=4))
+print("------------------------------------------\n")
