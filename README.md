@@ -85,8 +85,6 @@ The project uses the **Financial PhraseBank** dataset:
 - **Python**  
 - **CUDA** for GPU acceleration  
 - **NumPy, Pandas** for data processing  
-- **Scikit-learn** for ML models  
-- **PyTorch** for deep learning and Transformer architectures  
 - **Sentence-BERT** for semantic embeddings  
 
 ---
