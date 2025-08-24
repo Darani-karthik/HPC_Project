@@ -1,11 +1,11 @@
-# step2_softmax_regression.py (Corrected Hybrid Version)
+# step2_softmax_regression.py 
 
 import numpy as np
 import scipy.sparse
 import cupy as cp
 import cupyx.scipy.sparse as cp_sparse
 
-# --- Main Script ---
+
 print("--- Running Step 2: Softmax Regression (Hybrid CUDA & CuPy) ---")
 print("NOTE: Using a custom kernel for the gradient calculation and high-level CuPy for the rest.")
 
@@ -22,9 +22,8 @@ y_one_hot_cpu = np.eye(n_classes)[y_cpu].astype(np.float32)
 lr = 0.2
 epochs = 1500
 
-# -----------------------------------------------------------------------
-# 4. The Custom CUDA Kernel: The "Heart" of our CUDA Implementation
-# -----------------------------------------------------------------------
+# 4. The Custom CUDA Kernel
+
 update_weights_kernel_code = r'''
 extern "C" __global__
 void update_weights_kernel(float* weights,
@@ -67,7 +66,7 @@ d_weights = cp.zeros((n_features, n_classes), dtype=cp.float32)
 threads_per_block_2d = (16, 16)
 blocks_per_grid_2d = ((n_features + 15) // 16, (n_classes + 15) // 16)
 
-# 6. Training Loop (The Hybrid Approach in Action)
+# 6. Training Loop 
 print("Starting training...")
 for epoch in range(epochs):
     d_scores = d_X_sparse.dot(d_weights)
@@ -92,8 +91,8 @@ scores = X_sparse_cpu.dot(final_weights)
 exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
 probabilities = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
 predictions = np.argmax(probabilities, axis=1)
-# ----- THIS IS THE CORRECTED LINE -----
 accuracy = np.mean(predictions == y_cpu)
 
 print(f"\nSoftmax Regression Final Accuracy: {accuracy * 100:.2f}%")
+
 print("------------------------------------------\n")
