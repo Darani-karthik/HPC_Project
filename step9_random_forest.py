@@ -102,7 +102,6 @@ class DecisionTree:
         left_indices = indices[left_indices_mask]
         right_indices = indices[right_indices_mask]
         
-        # ***** CHANGE 3: Pass X and y in the recursive calls *****
         left = self._grow_tree(X, y, left_indices, depth + 1)
         right = self._grow_tree(X, y, right_indices, depth + 1)
         
