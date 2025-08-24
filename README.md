@@ -15,15 +15,6 @@ The project utilizes the well-regarded Financial PhraseBank dataset, which consi
 
 The initial phase focused on establishing strong performance baselines using classic ML and DL models. The text data was preprocessed using a standard TF-IDF vectorizer to create a high-dimensional (2000-feature) sparse representation of the sentences.
 
-### Models Implemented:
-
-| Category | Model | Custom CUDA Kernel's Role | Test Accuracy |
-| :--- | :--- | :--- | :--- |
-| **Deep Learning**| **Simple ANN (1-Layer)** | Gradient calc for the sparse input layer | **~81%** |
-| **Linear Models**| **SVM (Conjugate Gradient)** | Sparse matrix-vector products (`X*v`, `X.T*v`) | ~74% |
-| | Softmax Regression | Gradient calc & weight update | ~70% |
-| **Ensemble Models**| Random Forest (Stumps) | Finding the best split (Gini Impurity) | ~69% |
-
 ### Analysis of Foundational Models:
 
 *   **Artificial Neural Networks (ANN):** The simple 1-hidden-layer ANN proved to be the most effective model on the TF-IDF features, achieving the highest accuracy. Its non-linear activation function allowed it to capture complex patterns that were inaccessible to the other models. The custom CUDA kernel was crucial for efficiently calculating the gradient of the first layer connected to the sparse input data (`X.T @ delta`).
