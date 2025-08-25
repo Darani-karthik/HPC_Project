@@ -53,7 +53,7 @@ w1 = (cp.random.randn(n_features, h1_size) * cp.sqrt(2./n_features)).astype(cp.f
 b1 = cp.zeros(h1_size, dtype=cp.float32)
 w2 = (cp.random.randn(h1_size, h2_size) * cp.sqrt(2./h1_size)).astype(cp.float32)
 b2 = cp.zeros(h2_size, dtype=cp.float32)
-w3 = (cp.random.randn(h2_size, n_classes) * np.sqrt(2./h2_size)).astype(cp.float32)
+w3 = (cp.random.randn(h2_size, n_classes) * cp.sqrt(2./h2_size)).astype(cp.float32)
 b3 = cp.zeros(n_classes, dtype=cp.float32)
 
 # Prepare GPU data structures
@@ -62,9 +62,6 @@ d_X_data = cp.asarray(X_sparse_cpu.data)
 d_X_indices = cp.asarray(X_sparse_cpu.indices)
 d_X_indptr = cp.asarray(X_sparse_cpu.indptr)
 d_y_one_hot = cp.asarray(np.eye(n_classes)[y_cpu], dtype=cp.float32)
-blocks_2d_w1 = ((h1_size + 15)//16, (n_features + 15)//16)
-threads_2d = (16, 16)
-
 blocks_2d_w1 = ((h1_size + 15)//16, (n_features + 15)//16)
 threads_2d = (16, 16)
 
@@ -107,6 +104,5 @@ probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
 preds = np.argmax(probs, axis=1)
 accuracy = np.mean(preds == y_cpu)
 
-print(f"\nDeeper ANN Final Accuracy: {accuracy * 100:.2f}%")
 print(f"\nDeeper ANN Final Accuracy: {accuracy * 100:.2f}%")
 print("------------------------------------------\n")
