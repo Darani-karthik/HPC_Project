@@ -8,87 +8,85 @@ This project explores the implementation of **Machine Learning (ML)** and **Deep
 
 The project uses the **Financial PhraseBank** dataset:
 
-- **Total samples:** 4,840 English-language sentences.
-- **Source:** Financial news articles.
-- **Labels:** Positive, Negative, Neutral.
-- **Annotation:** Labeled by 16 finance and business experts to ensure domain-specific accuracy.
+- **Total samples:** 4,840 English-language sentences  
+- **Source:** Financial news articles  
+- **Labels:** Positive, Negative, Neutral  
+- **Annotation:** Labeled by 16 finance and business experts to ensure domain-specific accuracy
 
 ---
 
 ## Methodology
 
 ### 1) Data Preprocessing
-
-- Applied **One-Hot Encoding (OHE)**, **Singular Value Decomposition (SVD)**, and **Non-negative Matrix Factorization (NMF)** for feature extraction and dimensionality reduction.
-- Cleaned, tokenized, and transformed data into embeddings suitable for ML and DL models.
+- Applied **One-Hot Encoding (OHE)**, **Singular Value Decomposition (SVD)**, and **Non-negative Matrix Factorization (NMF)** for feature extraction and dimensionality reduction  
+- Cleaned, tokenized, and transformed data into embeddings suitable for ML and DL models
 
 ### 2) CUDA-Based Optimization
-
-- Implemented custom **CUDA kernels** to parallelize computationally intensive tasks.
-- Optimized **matrix multiplication**, **tiling techniques**, and efficient **Softmax** and **ReLU** activation functions.
+- Implemented custom **CUDA kernels** to parallelize computationally intensive tasks  
+- Optimized **matrix multiplication**, **tiling techniques**, and efficient **Softmax** and **ReLU** activation functions
 
 ### 3) Modeling
-
-- Traditional ML models for baseline evaluation.
-- Transformer-based architectures integrated with optimized embeddings for deep learning.
-
----
-
-## Phased Implementation
-
-### Phase 1 – One-Hot Encoding (OHE)
-- Generated OHE embeddings.
-- Trained traditional transformer  and tested performance on GPU.
-
-### Phase 2 – Singular Value Decomposition (SVD)
-- Reduced feature dimensionality using SVD.
-- Accelerated matrix operations with CUDA for better efficiency.
-- observed negative embeddings generation
-  
-### Phase 3 – Non-negative Matrix Factorization (NMF)
-- Applied NMF for feature extraction.
-- Assessed impact on deep learning model accuracy.
-- Optimized CUDA kernels for larger datasets.
-
-### Phase 4 – Custom CUDA Kernel Optimization
-- Developed CUDA kernels for **matrix multiplication**, **activations**, and **Softmax**.
-- Implemented **tiling techniques** for large-scale computations.
-
-### Phase 5 – Pretrained Sentence-BERT Embeddings
-- Used **Sentence-BERT** for generating dense embeddings.
-- Fine-tuned model for improved sentiment analysis.
-
-### Phase 6 – Transformer-Based Model Integration
-- Integrated **Transformer architectures** with optimized embeddings.
-- Tested and fine-tuned for high prediction accuracy.
+- Traditional ML models for baseline evaluation  
+- Transformer-based architectures integrated with optimized embeddings for deep learning
 
 ---
 
-## Future Work
+## Pipeline Steps
 
-- Further optimize CUDA kernels for enhanced scalability and efficiency.
-- Experiment with additional embeddings and advanced deep learning architectures.
-- Explore real-time financial news analysis for live sentiment prediction.
+### Step 1 – One-Hot Encoding (OHE)
+- Generated OHE embeddings for categorical features  
+- Trained a baseline transformer using these embeddings on GPU
+
+### Step 2 – Handling Imbalanced Data with SMOTE
+- Applied **SMOTE** to oversample minority classes  
+- Ensured fair representation of all classes in embeddings
+
+### Step 3 – TF-IDF Feature Extraction
+- Generated **TF-IDF embeddings** from textual data  
+- Captured term frequency and importance for richer representations
+
+### Step 4 – Singular Value Decomposition (SVD)
+- Applied **SVD** for dimensionality reduction on TF-IDF and other embeddings  
+- Accelerated matrix operations using CUDA  
+- Monitored negative embeddings generation and its impact on downstream models
+
+### Step 5 – Non-negative Matrix Factorization (NMF)
+- Applied **NMF** to extract non-negative features  
+- Optimized CUDA kernels to handle large datasets efficiently  
+- Evaluated effects on deep learning model performance
+
+### Step 6 – Custom CUDA Kernel Optimization & Tiling
+- Developed optimized **CUDA kernels** for matrix multiplication, activations, and Softmax  
+- Implemented **tiling techniques** for large-scale matrix computations  
+- Incorporated **MMA** (Matrix Multiply-Accumulate) for high throughput training
+
+### Step 7 – Sentence-BERT Embedding Generation
+- Used pretrained **Sentence-BERT** to generate dense semantic embeddings  
+- Fine-tuned embeddings for task-specific classification or regression
+
+### Step 8 – Fusion of Features & Transformer Integration
+- Combined **OHE, TF-IDF, SVD/NMF, and Sentence-BERT** embeddings into a unified representation  
+- Integrated fused embeddings into a **transformer-based model**  
+- Leveraged GPU acceleration and optimized kernels for faster training
+
+### Step 9 – Model Training and Evaluation
+- Trained transformer using fused embeddings  
+- Evaluated model performance using metrics:  
+  - Accuracy  
+  - F1-score  
+  - Precision  
+  - Recall  
+  - Robustness on balanced datasets
 
 ---
-
-## Outcome
-
-- Developed a **GPU-accelerated framework** for efficient financial text processing.
-- Achieved **significant reductions in training and inference time** while maintaining or improving sentiment prediction accuracy.
-- Demonstrated integration of **CUDA kernels with ML/DL pipelines**.
-
----
-
 ## Technologies Used
 
-- **Python**  
-- **CUDA** for GPU acceleration  
-- **NumPy, Pandas** for data processing  
-- **Sentence-BERT** for semantic embeddings  
-
----
-
-## License
-
-This project is released under the **MIT License**.
+- **Python** – Primary programming language for data processing, model development, and CUDA integration  
+- **CUDA** – GPU acceleration for custom kernels, matrix operations, and high-performance training  
+- **NumPy** – Efficient numerical computations and matrix operations  
+- **Pandas** – Data loading, preprocessing, and manipulation  
+- **Scikit-learn** – Traditional ML models, preprocessing, SVD, NMF, and evaluation metrics  
+- **Torch (PyTorch)** – Deep learning framework for transformer models and GPU training  
+- **Sentence-BERT** – Pretrained model for generating dense semantic embeddings from financial text  
+- **CuPy** – GPU-accelerated array computations compatible with NumPy  
+- **Imbalanced-learn** – Handling class imbalance using SMOTE and other resampling techniques
