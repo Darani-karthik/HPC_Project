@@ -9,8 +9,6 @@ import cupy as cp
 import time
 
 # Data Preprocessing + SVD Embedding
-print("--- Running Step 1: Data Preprocessing with SVD Embedding ---")
-
 df = pd.read_csv('fin_data_1.csv')
 df.columns = ['Sentence', 'Sentiment']
 df.dropna(subset=['Sentence', 'Sentiment'], inplace=True)
