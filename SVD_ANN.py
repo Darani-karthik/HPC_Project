@@ -1,4 +1,3 @@
-# step1_preprocess_and_train_dense.py
 
 import pandas as pd
 import numpy as np
@@ -22,7 +21,7 @@ df['Clean_Sentence'] = df['Sentence'].apply(lambda x: re.sub(r'[^a-zA-Z\s]', '',
 vectorizer = TfidfVectorizer(max_features=2000, stop_words='english')
 X_tfidf = vectorizer.fit_transform(df['Clean_Sentence'])
 
-# SVD Embedding (dense)
+# SVD Embedding
 svd_components = 256
 svd = TruncatedSVD(n_components=svd_components, random_state=42)
 X_svd = svd.fit_transform(X_tfidf).astype(np.float32)
