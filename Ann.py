@@ -1,9 +1,9 @@
-
 # Imports
 import numpy as np
 import scipy.sparse
 import cupy as cp
 import cupyx.scipy.sparse as cp_sparse
+import time
 
 # Load data and set parameters
 X_sparse_cpu = scipy.sparse.load_npz('preprocessed_features.npz')
@@ -16,33 +16,27 @@ lr, epochs = 0.05, 1500
 # CUDA kernel for sparse weight update
 update_sparse_weights_kernel_code = r'''
 extern "C" __global__
-void update_sparse_weights(float* w1, float* b1, const float* delta_h1,
-                           const float* X_data, const int* X_indices, const int* X_indptr,
-                           float lr, int n_samples, int n_features, int h1_size) {
-    int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
+void update_sparse_weights(
+    float* __restrict__ w1, float* __restrict__ b1,
+    const float* __restrict__ delta_h1,
+    const float* __restrict__ X_data,
+    const int* __restrict__ X_indices,
+    const int* __restrict__ X_indptr,
+    float lr, int n_samples, int h1_size)
+{
     int h1_idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (feature_idx < n_features && h1_idx < h1_size) {
-        float grad_w1 = 0.0f;
-        for (int i = 0; i < n_samples; ++i) {
-            float feature_val = 0.0f;
-            for (int j = X_indptr[i]; j < X_indptr[i + 1]; ++j) {
-                if (X_indices[j] == feature_idx) {
-                    feature_val = X_data[j];
-                    break;
-                }
-            }
-            grad_w1 += feature_val * delta_h1[i * h1_size + h1_idx];
+    if (h1_idx >= h1_size) return;
+    for (int i = 0; i < n_samples; ++i) {
+        float d_h1 = delta_h1[i * h1_size + h1_idx];
+        int row_start = X_indptr[i];
+        int row_end = X_indptr[i + 1];
+        for (int j = row_start; j < row_end; ++j) {
+            int feature_idx = X_indices[j];
+            float x_val = X_data[j];
+            atomicAdd(&w1[feature_idx * h1_size + h1_idx],
+                      -lr * (x_val * d_h1 / n_samples));
         }
-        w1[feature_idx * h1_size + h1_idx] -= lr * (grad_w1 / n_samples);
-
-    if (feature_idx == 0) {
-            float grad_b1 = 0.0f;
-            for (int i = 0; i < n_samples; ++i) {
-                grad_b1 += delta_h1[i * h1_size + h1_idx];
-            }
-            b1[h1_idx] -= lr * (grad_b1 / n_samples);
-        }
+        atomicAdd(&b1[h1_idx], -lr * (d_h1 / n_samples));
     }
 }
 '''
@@ -62,9 +56,10 @@ d_X_data = cp.asarray(X_sparse_cpu.data)
 d_X_indices = cp.asarray(X_sparse_cpu.indices)
 d_X_indptr = cp.asarray(X_sparse_cpu.indptr)
 d_y_one_hot = cp.asarray(np.eye(n_classes)[y_cpu], dtype=cp.float32)
-blocks_2d_w1 = ((h1_size + 15)//16, (n_features + 15)//16)
-threads_2d = (16, 16)
+threads_per_block = 128
+blocks_per_grid = (h1_size + threads_per_block - 1) // threads_per_block
 
+start = time.time()
 # Training loop
 print(f"Network: {n_features}->{h1_size}->{h2_size}->{n_classes}. Training...")
 for epoch in range(epochs):
@@ -86,11 +81,14 @@ for epoch in range(epochs):
     w2 -= lr * (h1_act.T.dot(delta_h2) / n_samples)
     b2 -= lr * (cp.sum(delta_h2, axis=0) / n_samples)
     # Update sparse input layer with custom kernel
-    update_sparse_weights_kernel(blocks_2d_w1, threads_2d,
+    update_sparse_weights_kernel(
+        (blocks_per_grid,), (threads_per_block,),
         (w1, b1, delta_h1, d_X_data, d_X_indices, d_X_indptr,
-         lr, n_samples, n_features, h1_size))
+         lr, n_samples, h1_size)
+    )
 
-    if (epoch + 1) % 100 == 0: print(f"Epoch {epoch+1}/{epochs} complete.")
+    if (epoch + 1) % 100 == 0:
+        print(f"Epoch {epoch+1}/{epochs} complete.")
 
 # Evaluation on CPU
 print("Training finished.")
@@ -104,5 +102,8 @@ probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
 preds = np.argmax(probs, axis=1)
 accuracy = np.mean(preds == y_cpu)
 
+end = time.time() 
+
+print(f"Block runtime: {end - start:.3f} seconds")
 print(f"\nDeeper ANN Final Accuracy: {accuracy * 100:.2f}%")
 print("------------------------------------------\n")
