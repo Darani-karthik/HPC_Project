@@ -64,10 +64,8 @@ The project uses the **Financial PhraseBank** dataset:
 - Used pretrained **Sentence-BERT** to generate dense semantic embeddings  
 - Fine-tuned embeddings for task-specific classification or regression
 
-### Step 8 – Fusion of Features & Transformer Integration
-- Combined **OHE, TF-IDF, SVD/NMF, and Sentence-BERT** embeddings into a unified representation  
-- Integrated fused embeddings into a **transformer-based model**  
-- Leveraged GPU acceleration and optimized kernels for faster training
+### Step 8 – selection of the best embedding techinque & Transformer Integration
+- All embedding techniques—including OHE, TF-IDF, SVD/NMF, and Sentence-BERT—were experimented with and integrated into a transformer-based model, leveraging GPU acceleration and optimized CUDA kernels to achieve faster and more efficient training.
 
 ### Step 9 – Model Training and Evaluation
 - Trained transformer using fused embeddings  
