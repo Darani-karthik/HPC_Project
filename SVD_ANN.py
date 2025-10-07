@@ -117,6 +117,7 @@ end = time.time()
 
 # Evaluation
 print("Training finished.")
+
 h1 = np.maximum(0, X_svd.dot(cp.asnumpy(w1)) + cp.asnumpy(b1))
 h2 = np.maximum(0, h1.dot(cp.asnumpy(w2)) + cp.asnumpy(b2))
 scores = h2.dot(cp.asnumpy(w3)) + cp.asnumpy(b3)
