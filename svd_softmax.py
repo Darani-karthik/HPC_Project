@@ -26,7 +26,7 @@ embedding_matrix = Vt.T  # (n_features, embedding_dim)
 # Transform data to embedded space
 X_embedded_cpu = X_sparse_cpu.dot(embedding_matrix).astype(np.float32)
 print(f"Original features: {n_features}, Embedded dimension: {embedding_dim}")
-print(f"Explained variance ratio: {(S*2).sum() / np.sum(X_sparse_cpu.data*2):.4f}")
+print(f"Explained variance ratio: {(S**2).sum() / np.sum(X_sparse_cpu.data**2):.4f}")
 
 # Move embedded data to GPU (now dense)
 d_X_embedded = cp.asarray(X_embedded_cpu, dtype=cp.float32)
@@ -41,10 +41,10 @@ epochs = 1500
 
 # --- Tiled CUDA kernel for dense matrix ---
 update_weights_dense_tiled_kernel_code = r'''
-extern "C" _global_
-void update_weights_dense_tiled_kernel(float* _restrict_ weights,
-                                        const float* _restrict_ X_embedded,
-                                        const float* _restrict_ error,
+extern "C" __global__
+void update_weights_dense_tiled_kernel(float* __restrict__ weights,
+                                        const float* __restrict__ X_embedded,
+                                        const float* __restrict__ error,
                                         float lr,
                                         int n_samples,
                                         int embedding_dim,
@@ -57,7 +57,7 @@ void update_weights_dense_tiled_kernel(float* _restrict_ weights,
     int tid = threadIdx.x;
 
     // Shared memory for tiling
-    extern _shared_ float shared_mem[];
+    extern __shared__ float shared_mem[];
     float* shared_error = shared_mem;
     float* shared_x = &shared_mem[tile_size];
 
