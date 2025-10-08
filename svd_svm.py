@@ -4,13 +4,14 @@ import cupy as cp
 import cupyx.scipy.sparse as cp_sparse
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD # Import TruncatedSVD
 
-print("--- Running Step 3: SVM (Hybrid CUDA & CuPy) on fin_data_1.csv ---")
+print("--- Running Step 3: SVM (Hybrid CUDA & CuPy) with SVD Embedding ---")
 
-# ============================================================== 
-# 1. Load Data & Set Params (Integrated Preprocessing)
+# ==============================================================
+# 1. Load Data & Preprocessing
 # ----------------------------------------------------
-print("Loading fin_data_1.csv and performing TF-IDF Vectorization...")
+print("Loading fin_data_1.csv and performing initial processing...")
 
 # Load data
 df = pd.read_csv('fin_data_1.csv')
@@ -20,40 +21,48 @@ sentiment_map = {'negative': 0, 'neutral': 1, 'positive': 2}
 df['Sentiment_Numeric'] = df['Sentiment'].map(sentiment_map)
 y_cpu = df['Sentiment_Numeric'].values.astype(np.int32)
 
-# TF-IDF Vectorization: Creates the sparse feature matrix X
-# Limiting features to max_features=5000 to keep the matrix manageable for GPU memory.
+# ==============================================================
+# 2. TF-IDF Vectorization & SVD Embedding
+# ----------------------------------------------------
+print("Performing TF-IDF Vectorization followed by SVD Embedding...")
+
+# Step A: TF-IDF Vectorization to create a sparse feature matrix
 vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
 X_sparse_cpu = vectorizer.fit_transform(df['Sentence'])
+print(f"Shape after TF-IDF: {X_sparse_cpu.shape}")
 
-# Define the core hyperparameters and extracted data properties
-n_samples, n_features = X_sparse_cpu.shape
+# Step B: SVD to create a dense embedding from the sparse matrix
+# We reduce the 5000 TF-IDF features to 300 dense semantic features.
+n_components = 300
+svd = TruncatedSVD(n_components=n_components, random_state=42)
+X_dense_cpu = svd.fit_transform(X_sparse_cpu).astype(np.float32)
+
+# Update data properties based on the new dense matrix
+n_samples, n_features = X_dense_cpu.shape
 n_classes = len(np.unique(y_cpu))
 epochs, lr, C = 500, 0.01, 1.0
-print(f"Data loaded and vectorized. Features shape: {X_sparse_cpu.shape}, Classes: {n_classes}")
+print(f"Shape after SVD Embedding: {X_dense_cpu.shape}, Classes: {n_classes}")
 
-# ============================================================== 
-# 2. The Custom CUDA Kernel for the SVM Gradient Update
+# ==============================================================
+# 3. Custom CUDA Kernel for DENSE SVM Gradient Update
 # ----------------------------------------------------
-# Keep your original kernel logic, but ensure types are used consistently.
-svm_update_kernel_code = r'''
+# This kernel is now simpler because it operates on a dense matrix.
+svm_update_kernel_code_dense = r'''
 extern "C" __global__
-void svm_update_kernel(float* weights, const float* X_data, const int* X_indices, const int* X_indptr,
-                       const float* y, const float* scores, float lr, float C,
-                       int n_samples, int n_features) {
+void svm_update_kernel_dense(float* weights, const float* X_dense,
+                             const float* y, const float* scores, float lr, float C,
+                             int n_samples, int n_features) {
     int feature_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
     if (feature_idx < n_features) {
         float grad = weights[feature_idx]; // Regularization term
-        // Hinge loss gradient calculation
+
+        // Hinge loss gradient calculation across all samples
         for (int sample_idx = 0; sample_idx < n_samples; ++sample_idx) {
-            if (y[sample_idx] * scores[sample_idx] < 1.0f) { // Condition for support vectors
-                float feature_val = 0.0f;
-                for (int i = X_indptr[sample_idx]; i < X_indptr[sample_idx + 1]; ++i) {
-                    if (X_indices[i] == feature_idx) {
-                        feature_val = X_data[i];
-                        break;
-                    }
-                }
-                grad -= C * y[sample_idx] * feature_val;
+            // Check if the sample is a support vector
+            if (y[sample_idx] * scores[sample_idx] < 1.0f) {
+                // For a dense matrix, access is direct: X[row * num_cols + col]
+                grad -= C * y[sample_idx] * X_dense[sample_idx * n_features + feature_idx];
             }
         }
         // Apply the weight update
@@ -61,43 +70,36 @@ void svm_update_kernel(float* weights, const float* X_data, const int* X_indices
     }
 }
 '''
-# Compile the CUDA code into a callable kernel object using CuPy.
-svm_update_kernel = cp.RawKernel(svm_update_kernel_code, 'svm_update_kernel')
+# Compile the new CUDA code for dense matrices.
+svm_update_kernel = cp.RawKernel(svm_update_kernel_code_dense, 'svm_update_kernel_dense')
 
-# ============================================================== 
-# 3. Move data to GPU & Define Kernel Config
+# ==============================================================
+# 4. Move data to GPU & Define Kernel Config
 # -------------------------------------------
-# Convert SciPy CSR arrays to appropriate dtypes and push to GPU
-d_X_data = cp.asarray(X_sparse_cpu.data.astype(np.float32))
-d_X_indices = cp.asarray(X_sparse_cpu.indices.astype(np.int32))
-d_X_indptr = cp.asarray(X_sparse_cpu.indptr.astype(np.int32))
+# Move the dense matrix to the GPU
+d_X = cp.asarray(X_dense_cpu)
 
-# Build a CuPy CSR matrix from the components
-d_X_sparse = cp_sparse.csr_matrix((d_X_data, d_X_indices, d_X_indptr), shape=(n_samples, n_features))
-
-# Prepare GPU versions of constants
-# Note: we'll create per-class label arrays below inside the loop
+# Kernel launch configuration (remains the same, but n_features is now 300)
 threads_per_block = 256
 num_blocks = (n_features + threads_per_block - 1) // threads_per_block
-grid = (num_blocks,)   # grid must be a tuple for RawKernel
+grid = (num_blocks,)
 block = (threads_per_block,)
 
-# ============================================================== 
-# 4. Main Training Loop (One-vs-Rest)
+# ==============================================================
+# 5. Main Training Loop (One-vs-Rest)
 # -----------------------------------
 all_weights = np.zeros((n_features, n_classes), dtype=np.float32)
 
-# Pre-convert scalar hyperparams to correct numpy types for passing
+# Pre-convert scalar hyperparams to correct types
 lr_f32 = np.float32(lr)
 C_f32 = np.float32(C)
 n_samples_i32 = np.int32(n_samples)
 n_features_i32 = np.int32(n_features)
 
-# Move a CPU array of indices for argmax evaluation later if needed
 for i in range(n_classes):
     print(f"\nTraining classifier for class {i}...")
 
-    # For the current class `i`, create a binary label vector on the GPU (+1 for class `i`, -1 for all others).
+    # Create a binary label vector on the GPU (+1 for class `i`, -1 for others).
     d_y_binary = cp.where(cp.asarray(y_cpu) == i, 1, -1).astype(cp.float32)
 
     # Initialize weights for this class on the GPU
@@ -105,17 +107,13 @@ for i in range(n_classes):
 
     # Main training loop for the individual classifier.
     for epoch in range(epochs):
-        # Step A: Forward pass (High-Level CuPy) - Calculate prediction scores.
-        # d_scores shape: (n_samples,)
-        d_scores = d_X_sparse.dot(d_weights_class).astype(cp.float32)
+        # Step A: Forward pass - Calculate prediction scores using dense matrix multiplication.
+        d_scores = cp.dot(d_X, d_weights_class)
 
-        # Step B: Update weights (Custom CUDA Kernel) - Perform gradient calculation and weight updates.
-        # Prepare args tuple (note the order must match kernel signature)
+        # Step B: Update weights - Call the custom kernel for dense matrices.
         args = (
             d_weights_class,      # float* weights
-            d_X_data,             # const float* X_data
-            d_X_indices,          # const int* X_indices
-            d_X_indptr,           # const int* X_indptr
+            d_X,                  # const float* X_dense
             d_y_binary,           # const float* y
             d_scores,             # const float* scores
             lr_f32,               # float lr
@@ -123,22 +121,19 @@ for i in range(n_classes):
             n_samples_i32,        # int n_samples
             n_features_i32        # int n_features
         )
-
-        # Kernel launch: grid and block are tuples.
         svm_update_kernel(grid, block, args)
 
-    # After training, retrieve the finalized weights for this classifier.
+    # Retrieve the finalized weights for this classifier.
     all_weights[:, i] = d_weights_class.get()
 
-# ============================================================== 
-# 5. Evaluation
+# ==============================================================
+# 6. Evaluation
 # --------------------------------------------------------------
 print("\nTraining complete. Evaluating...")
-# final_scores = X_sparse_cpu.dot(all_weights)  # SciPy sparse dot with dense matrix
-# SciPy dot returns float64 by default — convert to float32 for memory
-final_scores = X_sparse_cpu.dot(all_weights).astype(np.float32)
+# Use the dense CPU matrix for final evaluation
+final_scores = X_dense_cpu.dot(all_weights)
 predictions = np.argmax(final_scores, axis=1)
 accuracy = np.mean(predictions == y_cpu)
 
-print(f"\nSVM (One-vs-Rest) Final Accuracy: {accuracy * 100:.2f}%")
+print(f"\nSVM (One-vs-Rest with SVD) Final Accuracy: {accuracy * 100:.2f}%")
 print("------------------------------------------\n")
