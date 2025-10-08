@@ -7,14 +7,14 @@ import time
 
 # Optimized kernel with proper parallelization
 find_best_split_kernel_code = r'''
-extern "C" _global_
+extern "C" __global__
 void find_best_split_kernel(const float* data, const int* labels, const int* node_indices,
                             int n_node_indices, int n_total_features,
                             int n_features_subset, const int* feature_indices,
                             float* best_impurities, int* best_features, float* best_thresholds,
                             int n_thresholds_per_feature) {
     
-    extern _shared_ int shared_mem[];
+    extern __shared__ int shared_mem[];
     int* left_counts = shared_mem;  // 3 ints per feature
     int* right_counts = &shared_mem[n_features_subset * 3];  // 3 ints per feature
     
@@ -78,8 +78,8 @@ void find_best_split_kernel(const float* data, const int* labels, const int* nod
     }
     
     // Reduction within block to find best split for this feature
-    _shared_ float s_impurities[256];
-    _shared_ float s_thresholds[256];
+    __shared__ float s_impurities[256];
+    __shared__ float s_thresholds[256];
     
     s_impurities[tid] = best_local_impurity;
     s_thresholds[tid] = best_local_threshold;
@@ -102,7 +102,7 @@ void find_best_split_kernel(const float* data, const int* labels, const int* nod
 '''
 
 predict_kernel_code = r'''
-extern "C" _global_
+extern "C" __global__
 void predict_kernel(const float* data, int n_samples, int n_features,
                    const int* stump_features, const float* stump_thresholds,
                    const int* stump_left_vals, const int* stump_right_vals,
@@ -265,5 +265,5 @@ def run_stump_forest():
     print(f"Total Runtime: {time.time() - start_total:.3f}s")
     print(f"{'='*50}\n")
 
-if _name_ == '_main_':
+if __name__ == '__main__':
     run_stump_forest()
