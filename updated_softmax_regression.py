@@ -3,7 +3,7 @@ import scipy.sparse
 import cupy as cp
 import cupyx.scipy.sparse as cp_sparse
 
-# --- Load / prepare ---
+# --- Load / prepare (same as your original setup) ---
 X_sparse_cpu = scipy.sparse.load_npz('preprocessed_features.npz').tocsr()
 y_cpu = np.load('preprocessed_labels.npy').astype(np.int32)
 
@@ -11,7 +11,7 @@ n_samples, n_features = X_sparse_cpu.shape
 n_classes = int(len(np.unique(y_cpu)))
 y_one_hot_cpu = np.eye(n_classes, dtype=np.float32)[y_cpu]
 
-# Move CSR arrays to GPU 
+# Move CSR arrays to GPU (ensure d_X_data,d_X_indices,d_X_indptr are contiguous, dtype float32/int32)
 d_X_data = cp.asarray(X_sparse_cpu.data.astype(np.float32))
 d_X_indices = cp.asarray(X_sparse_cpu.indices.astype(np.int32))
 d_X_indptr = cp.asarray(X_sparse_cpu.indptr.astype(np.int32))
@@ -26,14 +26,14 @@ d_weights = cp.zeros((n_features, n_classes), dtype=cp.float32)
 lr = np.float32(0.2)
 epochs = 1500
 
-# --- Improved CUDA kernel ---
+# --- Improved CUDA kernel: one block per sample, threads iterate classes ---
 update_weights_kernel_code = r'''
-extern "C" _global_
-void update_weights_kernel(float* _restrict_ weights,
-                           const float* _restrict_ X_data,
-                           const int* _restrict_ X_indices,
-                           const int* _restrict_ X_indptr,
-                           const float* _restrict_ error,
+extern "C" __global__
+void update_weights_kernel(float* __restrict__ weights,
+                           const float* __restrict__ X_data,
+                           const int* __restrict__ X_indices,
+                           const int* __restrict__ X_indptr,
+                           const float* __restrict__ error,
                            float lr,
                            int n_samples,
                            int n_features,
@@ -102,7 +102,7 @@ for epoch in range(epochs):
 final_weights = d_weights.get()
 print("Training finished.")
 
-# --- Evaluation  ---
+# --- Evaluation (CPU-based accuracy) ---
 print("Evaluating on CPU...")
 
 scores = X_sparse_cpu.dot(final_weights)  # shape (n_samples, n_classes)
