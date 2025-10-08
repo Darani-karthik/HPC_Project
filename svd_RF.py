@@ -6,94 +6,89 @@ from sklearn.model_selection import train_test_split
 from collections import Counter
 import time
 
-# Optimized kernel with proper parallelization
+# ---------- Corrected CUDA kernels ----------
 find_best_split_kernel_code = r'''
-extern "C" _global_
+extern "C" __global__
 void find_best_split_kernel(const float* data, const int* labels, const int* node_indices,
                             int n_node_indices, int n_total_features,
                             int n_features_subset, const int* feature_indices,
                             float* best_impurities, int* best_features, float* best_thresholds,
                             int n_thresholds_per_feature) {
-    
-    extern _shared_ int shared_mem[];
-    int* left_counts = shared_mem;  // 3 ints per feature
-    int* right_counts = &shared_mem[n_features_subset * 3];  // 3 ints per feature
-    
+
+    // Shared memory layout (provided by launch): first blockDim.x floats for impurities,
+    // next blockDim.x floats for thresholds.
+    extern __shared__ float s_data[]; 
+    float* s_impurities = s_data;
+    float* s_thresholds = &s_data[blockDim.x];
+
     int tid = threadIdx.x;
     int feature_idx = blockIdx.x;
-    
     if (feature_idx >= n_features_subset) return;
-    
+
     int feature_col = feature_indices[feature_idx];
-    
-    // Initialize shared memory
-    if (tid < 3) {
-        left_counts[feature_idx * 3 + tid] = 0;
-        right_counts[feature_idx * 3 + tid] = 0;
-    }
-    __syncthreads();
-    
-    // Each block processes one feature, trying multiple thresholds
+
+    // Each thread maintains a local best
     float best_local_impurity = 1.1f;
     float best_local_threshold = -1.0f;
-    
-    // Stride through potential thresholds
-    for (int thresh_idx = tid; thresh_idx < n_node_indices; thresh_idx += blockDim.x) {
-        int sample_idx = node_indices[thresh_idx];
-        float threshold = data[sample_idx * n_total_features + feature_col];
-        
-        // Count classes in left and right splits (local to this thread)
-        int local_left[3] = {0, 0, 0};
-        int local_right[3] = {0, 0, 0};
+
+    // Stride over candidate thresholds (we use the feature values at node_indices as candidates)
+    for (int tidx = tid; tidx < n_node_indices; tidx += blockDim.x) {
+        int sample_idx_for_thresh = node_indices[tidx];
+        float threshold = data[sample_idx_for_thresh * n_total_features + feature_col];
+
+        // Local counts for 3 classes (assumes labels in {0,1,2})
+        int local_left[3] = {0,0,0};
+        int local_right[3] = {0,0,0};
         int n_left = 0, n_right = 0;
-        
-        for (int i = 0; i < n_node_indices; ++i) {
-            int idx = node_indices[i];
-            int label = labels[idx];
-            if (data[idx * n_total_features + feature_col] <= threshold) {
-                local_left[label]++;
+
+        // Scan all node samples and partition by threshold
+        for (int j = 0; j < n_node_indices; ++j) {
+            int idx = node_indices[j];
+            int lab = labels[idx];
+            float val = data[idx * n_total_features + feature_col];
+            if (val <= threshold) {
+                local_left[lab]++;
                 n_left++;
             } else {
-                local_right[label]++;
+                local_right[lab]++;
                 n_right++;
             }
         }
-        
+
         if (n_left > 0 && n_right > 0) {
             float gini_left = 1.0f, gini_right = 1.0f;
-            for (int i = 0; i < 3; ++i) {
-                float p_left = (float)local_left[i] / n_left;
-                float p_right = (float)local_right[i] / n_right;
+            for (int c = 0; c < 3; ++c) {
+                float p_left = (float)local_left[c] / (float)n_left;
+                float p_right = (float)local_right[c] / (float)n_right;
                 gini_left -= p_left * p_left;
                 gini_right -= p_right * p_right;
             }
-            
-            float weighted_gini = ((float)n_left / n_node_indices) * gini_left + 
-                                  ((float)n_right / n_node_indices) * gini_right;
-            
+            float weighted_gini = ((float)n_left / (float)n_node_indices) * gini_left +
+                                  ((float)n_right / (float)n_node_indices) * gini_right;
             if (weighted_gini < best_local_impurity) {
                 best_local_impurity = weighted_gini;
                 best_local_threshold = threshold;
             }
         }
     }
-    
-    // Reduction within block to find best split for this feature
-    _shared_ float s_impurities[256];
-    _shared_ float s_thresholds[256];
-    
+
+    // Store local best into shared arrays
     s_impurities[tid] = best_local_impurity;
     s_thresholds[tid] = best_local_threshold;
     __syncthreads();
-    
+
+    // Parallel reduction to find the best among threads for this block
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s && s_impurities[tid + s] < s_impurities[tid]) {
-            s_impurities[tid] = s_impurities[tid + s];
-            s_thresholds[tid] = s_thresholds[tid + s];
+        if (tid < s) {
+            if (s_impurities[tid + s] < s_impurities[tid]) {
+                s_impurities[tid] = s_impurities[tid + s];
+                s_thresholds[tid] = s_thresholds[tid + s];
+            }
         }
         __syncthreads();
     }
-    
+
+    // Thread 0 writes final result for this feature
     if (tid == 0) {
         best_impurities[feature_idx] = s_impurities[0];
         best_features[feature_idx] = feature_col;
@@ -103,37 +98,34 @@ void find_best_split_kernel(const float* data, const int* labels, const int* nod
 '''
 
 predict_kernel_code = r'''
-extern "C" _global_
+extern "C" __global__
 void predict_kernel(const float* data, int n_samples, int n_features,
                    const int* stump_features, const float* stump_thresholds,
                    const int* stump_left_vals, const int* stump_right_vals,
                    int n_stumps, int* predictions) {
-    
+
     int sample_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (sample_idx >= n_samples) return;
-    
-    int votes[3] = {0, 0, 0};
-    
+
+    int votes0 = 0, votes1 = 0, votes2 = 0;
+
     for (int i = 0; i < n_stumps; ++i) {
         int feature = stump_features[i];
         float threshold = stump_thresholds[i];
         float val = data[sample_idx * n_features + feature];
-        
         int pred = (val <= threshold) ? stump_left_vals[i] : stump_right_vals[i];
-        votes[pred]++;
+        if (pred == 0) votes0++;
+        else if (pred == 1) votes1++;
+        else if (pred == 2) votes2++;
     }
-    
+
     // Find max vote
-    int max_vote = votes[0];
-    int prediction = 0;
-    for (int i = 1; i < 3; ++i) {
-        if (votes[i] > max_vote) {
-            max_vote = votes[i];
-            prediction = i;
-        }
-    }
-    
-    predictions[sample_idx] = prediction;
+    int pred_final = 0;
+    int max_vote = votes0;
+    if (votes1 > max_vote) { max_vote = votes1; pred_final = 1; }
+    if (votes2 > max_vote) { pred_final = 2; }
+
+    predictions[sample_idx] = pred_final;
 }
 '''
 
@@ -142,143 +134,151 @@ predict_kernel = cp.RawKernel(predict_kernel_code, 'predict_kernel')
 
 def run_stump_forest():
     print("--- Running Step 9: Optimized Random Forest with SVD ---")
-    
-    # Start total timer
+
     start_total = time.time()
-    
-    # Data loading
+
+    # 1) Load
     print("\n[1/5] Loading data...")
     start_load = time.time()
     X_sparse = scipy.sparse.load_npz('preprocessed_features.npz')
     y = np.load('preprocessed_labels.npy')
     print(f"    Original shape: {X_sparse.shape}")
     print(f"    Data loading time: {time.time() - start_load:.3f}s")
-    
-    # SVD dimensionality reduction
+
+    # 2) SVD
     print("\n[2/5] Applying SVD dimensionality reduction...")
     start_svd = time.time()
-    n_components = min(300, min(X_sparse.shape) - 1)  # Reduce to 300 dimensions
+    n_components = min(300, min(X_sparse.shape) - 1)
     print(f"    Reducing to {n_components} dimensions...")
-    
-    # Perform truncated SVD
     U, S, Vt = svds(X_sparse, k=n_components)
-    X_reduced = U @ np.diag(S)  # Transformed features
+    X_reduced = U @ np.diag(S)
     print(f"    Reduced shape: {X_reduced.shape}")
     print(f"    SVD time: {time.time() - start_svd:.3f}s")
-    
-    # Train/test split
+
+    # 3) Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
         X_reduced, y, test_size=0.2, random_state=42, stratify=y
     )
-    
-    # GPU transfer
+
+    # 4) Transfer to GPU
     print("\n[3/5] Transferring data to GPU...")
     start_transfer = time.time()
-    d_X_train = cp.asarray(X_train, dtype=cp.float32)
-    d_y_train = cp.asarray(y_train, dtype=cp.int32)
-    d_X_test = cp.asarray(X_test, dtype=cp.float32)
+    d_X_train = cp.asarray(X_train.astype(np.float32))
+    d_y_train = cp.asarray(y_train.astype(np.int32))
+    d_X_test = cp.asarray(X_test.astype(np.float32))
     cp.cuda.Stream.null.synchronize()
     print(f"    GPU transfer time: {time.time() - start_transfer:.3f}s")
-    
+
     n_trees = 10
     n_features = X_train.shape[1]
-    n_feats_sqrt = int(np.sqrt(n_features))
-    
+    n_feats_sqrt = max(1, int(np.sqrt(n_features)))
+
     stump_features = []
     stump_thresholds = []
     stump_left_vals = []
     stump_right_vals = []
 
-    print(f"\n[3/4] Training {n_trees} trees...")
+    print(f"\n[4/5] Training {n_trees} trees...")
     start_train = time.time()
-
+    threads_per_block = 256
     for i in range(n_trees):
         if (i + 1) % 5 == 0 or i == 0:
             print(f"    Training tree {i+1}/{n_trees}...")
-        
-        # Bootstrap sample
-        indices = cp.random.choice(len(X_train), len(X_train), replace=True)
+
+        # Bootstrap sample (indices on CPU, then use to index d_X_train via fancy indexing on GPU)
+        indices = np.random.choice(len(X_train), len(X_train), replace=True)
         d_X_sample = d_X_train[indices]
         d_y_sample = d_y_train[indices]
-        
-        # Random feature subset
-        feat_indices = np.random.choice(n_features, n_feats_sqrt, replace=False)
-        d_feat_indices = cp.asarray(feat_indices, dtype=cp.int32)
-        d_node_indices = cp.arange(len(indices), dtype=cp.int32)
-        
-        # Output arrays (one per feature)
+
+        # Random feature subset (CPU)
+        feat_indices = np.random.choice(n_features, n_feats_sqrt, replace=False).astype(np.int32)
+        d_feat_indices = cp.asarray(feat_indices)
+
+        # node indices (we use 0..n-1 of the sample)
+        n_node_indices = len(indices)
+        d_node_indices = cp.arange(n_node_indices, dtype=cp.int32)
+
+        # Output arrays (one entry per tested feature)
         d_best_impurities = cp.full(n_feats_sqrt, 1.1, dtype=cp.float32)
         d_best_features = cp.full(n_feats_sqrt, -1, dtype=cp.int32)
         d_best_thresholds = cp.full(n_feats_sqrt, -1.0, dtype=cp.float32)
-        
-        # Launch kernel: one block per feature
-        threads_per_block = 256
+
+        # Launch kernel: one block per feature; shared mem size = threads_per_block * 2 * 4 bytes (floats)
         blocks = n_feats_sqrt
-        shared_mem_size = n_feats_sqrt * 6 * 4  # (left_counts + right_counts) * 3 classes * 4 bytes
-        
+        shared_mem_size = threads_per_block * 2 * 4  # two float arrays of length threads_per_block
+
+        # kernel args: must match signature order and dtypes
         find_best_split_kernel(
             (blocks,), (threads_per_block,),
-            (d_X_sample, d_y_sample, d_node_indices, len(indices),
-             n_features, n_feats_sqrt, d_feat_indices,
-             d_best_impurities, d_best_features, d_best_thresholds, len(indices)),
+            (d_X_sample, d_y_sample, d_node_indices,
+             np.int32(n_node_indices), np.int32(n_features),
+             np.int32(n_feats_sqrt), d_feat_indices,
+             d_best_impurities, d_best_features, d_best_thresholds, np.int32(n_node_indices)),
             shared_mem=shared_mem_size
         )
-        
-        # Find best feature across all tested features (on CPU)
+
+        # Bring results back to CPU to decide best feature
         impurities = d_best_impurities.get()
-        best_idx = cp.argmin(d_best_impurities).get()
-        
+        best_idx = int(np.argmin(impurities))
         if impurities[best_idx] < 1.1:
             best_feat = int(d_best_features[best_idx].get())
             best_thresh = float(d_best_thresholds[best_idx].get())
-            
-            # Compute leaf values
+
+            # compute leaf values on CPU (small arrays)
             X_sample_cpu = d_X_sample.get()
             y_sample_cpu = d_y_sample.get()
-            
+
             left_mask = X_sample_cpu[:, best_feat] <= best_thresh
             right_mask = ~left_mask
-            
-            left_val = Counter(y_sample_cpu[left_mask]).most_common(1)[0][0] if np.any(left_mask) else 0
-            right_val = Counter(y_sample_cpu[right_mask]).most_common(1)[0][0] if np.any(right_mask) else 0
-            
+
+            if np.any(left_mask):
+                left_val = Counter(y_sample_cpu[left_mask]).most_common(1)[0][0]
+            else:
+                left_val = 0
+            if np.any(right_mask):
+                right_val = Counter(y_sample_cpu[right_mask]).most_common(1)[0][0]
+            else:
+                right_val = 0
+
             stump_features.append(best_feat)
             stump_thresholds.append(best_thresh)
-            stump_left_vals.append(left_val)
-            stump_right_vals.append(right_val)
-    
+            stump_left_vals.append(int(left_val))
+            stump_right_vals.append(int(right_val))
+
     cp.cuda.Stream.null.synchronize()
     print(f"    Training time: {time.time() - start_train:.3f}s")
     print(f"    Trained {len(stump_features)} valid stumps")
 
+    if len(stump_features) == 0:
+        print("No stumps were trained successfully. Exiting.")
+        return
+
+    # 5) Predict
     print("\n[5/5] Predicting on GPU...")
-    
-    # Prepare stump data on GPU
     start_pred = time.time()
     d_stump_features = cp.asarray(stump_features, dtype=cp.int32)
     d_stump_thresholds = cp.asarray(stump_thresholds, dtype=cp.float32)
     d_stump_left = cp.asarray(stump_left_vals, dtype=cp.int32)
     d_stump_right = cp.asarray(stump_right_vals, dtype=cp.int32)
     d_predictions = cp.zeros(len(X_test), dtype=cp.int32)
-    
-    # Launch prediction kernel
+
     threads_per_block = 256
     blocks = (len(X_test) + threads_per_block - 1) // threads_per_block
-    
+
     predict_kernel(
         (blocks,), (threads_per_block,),
-        (d_X_test, len(X_test), n_features,
+        (d_X_test, np.int32(len(X_test)), np.int32(n_features),
          d_stump_features, d_stump_thresholds,
          d_stump_left, d_stump_right,
-         len(stump_features), d_predictions)
+         np.int32(len(stump_features)), d_predictions)
     )
-    
+
     cp.cuda.Stream.null.synchronize()
     final_preds = d_predictions.get()
     print(f"    Prediction time: {time.time() - start_pred:.3f}s")
-    
+
     accuracy = np.mean(final_preds == y_test)
-    
+
     print(f"\n{'='*50}")
     print(f"SVD-based Random Forest Results:")
     print(f"  - Dimensions: {X_sparse.shape[1]} → {n_components}")
@@ -286,5 +286,6 @@ def run_stump_forest():
     print(f"  - Total Runtime: {time.time() - start_total:.3f}s")
     print(f"{'='*50}\n")
 
-if _name_ == '_main_':
+
+if __name__ == '__main__':
     run_stump_forest()
